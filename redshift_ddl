@@ -1,0 +1,86 @@
+-- Define the username variable
+\set your_username shobhit
+
+-- Create User in Redshift
+CREATE USER :your_username
+PASSWORD 'your_password';
+
+-- Create a role for non-SG users
+CREATE ROLE non_sg_users;
+
+-- Assign the role to the user "shobhit"
+GRANT non_sg_users TO :your_username;
+
+-- Create 3 Tables
+
+-- Table 1: RLS on Country = SINGAPORE
+CREATE TABLE tab_rls (
+    id INT,
+    name VARCHAR(50),
+    country VARCHAR(50)
+);
+
+-- Table 2: Column-Level Access Control on Name column
+CREATE TABLE tab_cls (
+    id INT,
+    name VARCHAR(50),
+    country VARCHAR(50)
+);
+
+-- Table 3: Dynamic Data Masking on Credit Card column
+CREATE TABLE tab_ddy (
+    id INT,
+    name VARCHAR(50),
+    credit_card VARCHAR(16),
+    country VARCHAR(50)
+);
+
+-- Implement Row-Level Security (RLS) for non-SG users on tab_rls
+
+-- Create the RLS policy function for non-SG users
+CREATE FUNCTION rls_non_sg_policy() RETURNS boolean AS
+$$
+  SELECT 'non_sg_users' = ANY (current_setting('user.roles', TRUE));
+$$ LANGUAGE SQL;
+
+-- Apply RLS policy to tab_rls based on the function
+CREATE POLICY rls_non_sg_policy
+    FOR tab_rls
+    USING (rls_non_sg_policy());
+
+-- Implement Column-Level Access Control (CLS) for the Name column on tab_cls
+
+-- Create a group for users allowed to access the name column
+CREATE GROUP allowed_name_access;
+
+-- Grant SELECT privilege on the Name column to the group
+GRANT SELECT (name) ON tab_cls TO GROUP allowed_name_access;
+
+-- Grant the group to specific users
+GRANT allowed_name_access TO :your_username;
+
+-- Implement Dynamic Data Masking (DDY) for the Credit Card column on tab_ddy
+
+-- Create a masking policy for the credit_card column
+CREATE POLICY masking_policy ON tab_ddy AS PERMISSIVE FOR ALL
+USING (current_user = :your_username);
+
+-- Create a masking function for the credit_card column
+CREATE FUNCTION credit_card_masking_function(value VARCHAR)
+RETURNS VARCHAR
+STABLE
+AS
+$$
+BEGIN
+  IF current_user <> :your_username THEN
+    RETURN '************' || RIGHT(value, 4);
+  ELSE
+    RETURN value;
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Apply the masking function to the credit_card column
+ALTER TABLE tab_ddy
+ALTER COLUMN credit_card
+SET MASKING POLICY masking_policy USING credit_card_masking_function;
